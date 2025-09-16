@@ -30,6 +30,14 @@ type Player = {
   color: string;
 };
 
+type MCQuestion = {
+  q_pt: string;
+  q_en: string;
+  opts_pt: [string, string, string];
+  opts_en: [string, string, string];
+  correct: 0 | 1 | 2;
+};
+
 const I18N = {
   title: { pt: "Caminho da Fé", en: "Path of Faith" },
   start: { pt: "Vida Terrena (Início)", en: "Earthly Life (Start)" },
@@ -44,6 +52,9 @@ const I18N = {
     en: "Sabbath: you rest this turn and gain +2 faith points.",
   },
   question: { pt: "Pergunta", en: "Question" },
+  choose: { pt: "Escolhe uma opção:", en: "Choose one option:" },
+  correct: { pt: "Certo! +2 Pontos de Fé.", en: "Correct! +2 Faith Points." },
+  wrong: { pt: "Errado. -1 Ponto de Fé.", en: "Wrong. -1 Faith Point." },
   players: { pt: "Jogadores", en: "Players" },
   startGame: { pt: "Começar Jogo", en: "Start Game" },
 };
@@ -57,6 +68,7 @@ const COLORS = [
   "#0ea5e9",
 ];
 
+// --- Decks ---
 const blessings: Card[] = [
   {
     pt: "Ajudaste um irmão: +2 pontos.",
@@ -79,14 +91,23 @@ const obstacles: Card[] = [
 
 const missions: Card[] = [
   { pt: "Partilhaste a fé: +2.", en: "Shared your faith: +2.", points: +2 },
-  { pt: "Apoio a missão: +1.", en: "Mission support: +1.", points: +1 },
+  {
+    pt: "Apoiaste uma missão: +1.",
+    en: "Supported a mission: +1.",
+    points: +1,
+  },
+  {
+    pt: "Encorajaste um jogador: dá +1 a outro.",
+    en: "Encouraged a player: give +1 to someone.",
+    points: 0,
+  },
 ];
 
 const tithes: Card[] = [
   {
-    pt: "Dízimo: dás 1, recebes 1. 0 líquido.",
-    en: "Tithe: give 1, receive 1. Net 0.",
-    points: 0,
+    pt: "Dízimo: dás 1 ponto e recebes uma BÊNÇÃO.",
+    en: "Tithe: give 1 point and receive a BLESSING.",
+    points: -1,
   },
 ];
 
@@ -94,27 +115,39 @@ const temptations: Card[] = [
   { pt: "Tentação: -1 ponto.", en: "Temptation: -1 point.", points: -1 },
 ];
 
-const questions = [
+const questionsMC: MCQuestion[] = [
   {
-    ptQ: "Quem construiu a arca?",
-    ptA: "Noé",
-    enQ: "Who built the ark?",
-    enA: "Noah",
+    q_pt: "Quem construiu a arca?",
+    q_en: "Who built the ark?",
+    opts_pt: ["Moisés", "Noé", "Abraão"],
+    opts_en: ["Moses", "Noah", "Abraham"],
+    correct: 1,
   },
   {
-    ptQ: "Quem foi engolido por um grande peixe?",
-    ptA: "Jonas",
-    enQ: "Who was swallowed by a great fish?",
-    enA: "Jonah",
+    q_pt: "Quem foi engolido por um grande peixe?",
+    q_en: "Who was swallowed by a great fish?",
+    opts_pt: ["Jonas", "Pedro", "Elias"],
+    opts_en: ["Jonah", "Peter", "Elijah"],
+    correct: 0,
   },
   {
-    ptQ: "Quem foram os três amigos de Daniel?",
-    ptA: "Sadraque, Mesaque e Abednego",
-    enQ: "Name Daniel's three friends.",
-    enA: "Shadrach, Meshach, Abednego",
+    q_pt: "Amigos de Daniel na fornalha?",
+    q_en: "Daniel's friends in the furnace?",
+    opts_pt: [
+      "Nabucodonosor, Belsazar, Dario",
+      "Sadraque, Mesaque e Abednego",
+      "José, Calebe e Josué",
+    ],
+    opts_en: [
+      "Nebuchadnezzar, Belshazzar, Darius",
+      "Shadrach, Meshach, Abednego",
+      "Joseph, Caleb, Joshua",
+    ],
+    correct: 1,
   },
 ];
 
+// --- Board pattern ---
 const buildTiles = () => {
   const pattern: TileType[] = [
     "START",
@@ -176,7 +209,7 @@ function label(type: TileType, lang: Lang) {
   return map[type][lang];
 }
 
-// 40 tiles (10 per side) coordinates around a square
+// 40 tiles coords
 function getXY(index: number) {
   const side = 10,
     cell = 34,
@@ -199,7 +232,7 @@ function getXY(index: number) {
   return { x, y, cell, size };
 }
 
-// offsets for up to 6 tokens on the same tile (3x2 grid)
+// offsets for up to 6 tokens
 function tokenOffset(slot: number) {
   const positions = [
     { dx: 2, dy: 2 },
@@ -216,8 +249,12 @@ export default function App() {
   const [lang, setLang] = useState<Lang>("pt");
   const [playerCount, setPlayerCount] = useState(2);
   const [players, setPlayers] = useState<Player[] | null>(null);
-  const [current, setCurrent] = useState(0); // index of current player
+  const [current, setCurrent] = useState(0);
   const [modal, setModal] = useState<string | null>(null);
+
+  // state machine for resolving effects
+  const [awaiting, setAwaiting] = useState(false);
+  const [activeQ, setActiveQ] = useState<MCQuestion | null>(null);
 
   function startGame() {
     const pc = Math.min(6, Math.max(2, playerCount));
@@ -232,11 +269,28 @@ export default function App() {
     setPlayers(ps);
     setCurrent(0);
     setModal(null);
+    setAwaiting(false);
+    setActiveQ(null);
   }
 
   const roll = () => Math.floor(Math.random() * 6) + 1;
 
-  function resolveTileFor(p: Player) {
+  function giveOneToAnother(fromIdx: number) {
+    if (!players || players.length < 2) return;
+    const receivers = players.map((_, i) => i).filter((i) => i !== fromIdx);
+    const idx = receivers[Math.floor(Math.random() * receivers.length)];
+    setPlayers((prev) => {
+      if (!prev) return prev;
+      const copy = prev.map((p) => ({ ...p }));
+      if (copy[fromIdx].faith > 0) {
+        copy[fromIdx].faith -= 1;
+        copy[idx].faith += 1;
+      }
+      return copy;
+    });
+  }
+
+  function resolveTileFor(p: Player, pIndex: number) {
     const tile = TILES[p.pos];
     switch (tile) {
       case "BENCAO": {
@@ -245,6 +299,7 @@ export default function App() {
         if (typeof c.moveDelta === "number")
           p.pos = (p.pos + c.moveDelta + 40) % 40;
         setModal(lang === "pt" ? c.pt : c.en);
+        setAwaiting(true);
         break;
       }
       case "OBSTACULO": {
@@ -253,49 +308,68 @@ export default function App() {
         if (typeof c.moveDelta === "number")
           p.pos = (p.pos + c.moveDelta + 40) % 40;
         setModal(lang === "pt" ? c.pt : c.en);
+        setAwaiting(true);
         break;
       }
       case "MISSAO": {
         const c = missions[Math.floor(Math.random() * missions.length)];
         if (typeof c.points === "number") p.faith += c.points;
+        // caso “dar +1 a outro”
+        if (
+          (lang === "pt" ? c.pt : c.en).toLowerCase().includes("dar +1") ||
+          (lang === "pt" ? c.pt : c.en).toLowerCase().includes("give +1")
+        ) {
+          giveOneToAnother(pIndex);
+        }
         setModal(lang === "pt" ? c.pt : c.en);
+        setAwaiting(true);
         break;
       }
       case "DIZIMO": {
-        const c = tithes[0];
-        if (typeof c.points === "number") p.faith += c.points;
-        setModal(lang === "pt" ? c.pt : c.en);
+        // paga 1 (se tiver) e recebe uma benção aleatória
+        if (p.faith > 0) p.faith -= 1;
+        const b = blessings[Math.floor(Math.random() * blessings.length)];
+        if (typeof b.points === "number") p.faith += b.points;
+        if (typeof b.moveDelta === "number")
+          p.pos = (p.pos + b.moveDelta + 40) % 40;
+        const msg =
+          lang === "pt"
+            ? `Dízimo: deste 1 ponto.\nBênção: ${b.pt}`
+            : `Tithe: you gave 1 point.\nBlessing: ${b.en}`;
+        setModal(msg);
+        setAwaiting(true);
         break;
       }
       case "TENTACAO": {
         const c = temptations[0];
         if (typeof c.points === "number") p.faith += c.points;
         setModal(lang === "pt" ? c.pt : c.en);
+        setAwaiting(true);
         break;
       }
       case "SABADO": {
-        p.skip += 1; // rests next turn
+        p.skip += 1;
         p.faith += 2;
         setModal(I18N.restMsg[lang]);
+        setAwaiting(true);
         break;
       }
       case "PERGUNTA": {
-        const c = questions[Math.floor(Math.random() * questions.length)];
-        p.faith += 1;
-        setModal(
-          `${lang === "pt" ? c.ptQ : c.enQ}\n\n(${I18N.question[lang]} ➜ ${
-            lang === "pt" ? c.ptA : c.enA
-          })\n(+1 ${I18N.faith[lang]})`
-        );
+        // múltipla escolha
+        const q = questionsMC[Math.floor(Math.random() * questionsMC.length)];
+        setActiveQ(q);
+        setAwaiting(true);
         break;
       }
-      default:
+      default: {
+        setAwaiting(true);
         break;
+      }
     }
   }
 
   function onRoll() {
-    if (!players) return;
+    if (!players || awaiting) return;
 
     setPlayers((prev) => {
       if (!prev) return prev;
@@ -304,23 +378,48 @@ export default function App() {
 
       if (p.skip > 0) {
         p.skip -= 1;
-        p.faith += 2; // sabbath rest benefit on the skipped turn
+        p.faith += 2;
         setModal(I18N.restMsg[lang]);
+        setAwaiting(true);
       } else {
         const r1 = roll();
         const r2 = roll();
         const steps = r1 + r2;
         p.pos = (p.pos + steps) % 40;
-        resolveTileFor(p);
-        setModal((m) => `${I18N.rolled[lang]} ${steps}\n\n${m ?? ""}`.trim());
+        // mostra o resultado do dado antes/junto do efeito
+        setModal(`${I18N.rolled[lang]} ${steps}`);
+        resolveTileFor(p, current);
       }
       return copy;
     });
+  }
 
-    // pass turn to next player AFTER state update
+  function closeModalAndNextTurn() {
+    setModal(null);
+    setActiveQ(null);
+    setAwaiting(false);
+    // passa o turno
     setCurrent((i) => {
       if (!players) return 0;
       return (i + 1) % players.length;
+    });
+  }
+
+  function answerQuestion(choice: 0 | 1 | 2) {
+    if (!players || activeQ === null) return;
+    setPlayers((prev) => {
+      if (!prev) return prev;
+      const copy = prev.map((p) => ({ ...p }));
+      const p = copy[current];
+      if (choice === activeQ.correct) {
+        p.faith += 2;
+        setModal(I18N.correct[lang]);
+      } else {
+        p.faith -= 1;
+        setModal(I18N.wrong[lang]);
+      }
+      setActiveQ(null);
+      return copy;
     });
   }
 
@@ -376,7 +475,7 @@ export default function App() {
     return tiles;
   }, [lang, players]);
 
-  // Setup screen (choose 2–6 players) before starting
+  // Setup screen
   if (!players) {
     return (
       <View style={styles.container}>
@@ -467,21 +566,50 @@ export default function App() {
 
       <View style={styles.boardWrap}>{board}</View>
 
-      <Pressable style={styles.rollBtn} onPress={onRoll}>
+      <Pressable style={styles.rollBtn} onPress={onRoll} disabled={awaiting}>
         <Text style={styles.btnText}>
           {I18N.roll[lang]} — {players[current]?.name}
         </Text>
       </Pressable>
 
-      <Modal visible={!!modal} transparent animationType="fade">
+      {/* Modal genérico + Pergunta MC */}
+      <Modal visible={!!(modal || activeQ)} transparent animationType="fade">
         <View style={styles.modalBack}>
           <View style={styles.modalBox}>
-            <ScrollView>
-              <Text style={styles.modalText}>{modal}</Text>
-            </ScrollView>
-            <Pressable style={styles.closeBtn} onPress={() => setModal(null)}>
-              <Text style={styles.btnText}>{I18N.next[lang]}</Text>
-            </Pressable>
+            {activeQ ? (
+              <View style={{ gap: 12 }}>
+                <Text style={styles.modalText}>
+                  {lang === "pt" ? activeQ.q_pt : activeQ.q_en}
+                </Text>
+                <Text style={{ opacity: 0.7 }}>{I18N.choose[lang]}</Text>
+                {(lang === "pt" ? activeQ.opts_pt : activeQ.opts_en).map(
+                  (opt, idx) => (
+                    <Pressable
+                      key={idx}
+                      style={styles.optionBtn}
+                      onPress={() => answerQuestion(idx as 0 | 1 | 2)}
+                    >
+                      <Text style={styles.optionText}>
+                        {String.fromCharCode(65 + idx)}. {opt}
+                      </Text>
+                    </Pressable>
+                  )
+                )}
+              </View>
+            ) : (
+              <ScrollView>
+                <Text style={styles.modalText}>{modal}</Text>
+              </ScrollView>
+            )}
+
+            {!activeQ && (
+              <Pressable
+                style={styles.closeBtn}
+                onPress={closeModalAndNextTurn}
+              >
+                <Text style={styles.btnText}>{I18N.next[lang]}</Text>
+              </Pressable>
+            )}
           </View>
         </View>
       </Modal>
@@ -575,7 +703,7 @@ const styles = StyleSheet.create({
   },
   modalBox: {
     width: "86%",
-    maxHeight: "60%",
+    maxHeight: "70%",
     backgroundColor: "white",
     borderRadius: 12,
     padding: 16,
@@ -587,9 +715,10 @@ const styles = StyleSheet.create({
     paddingVertical: 10,
     borderRadius: 8,
     alignItems: "center",
+    marginTop: 12,
   },
 
-  // Setup screen
+  // setup screen
   smallBtn: {
     backgroundColor: "#1f2937",
     paddingHorizontal: 12,
@@ -604,4 +733,13 @@ const styles = StyleSheet.create({
     borderRadius: 10,
     marginTop: 8,
   },
+
+  // MC options
+  optionBtn: {
+    backgroundColor: "#e5e7eb",
+    padding: 10,
+    borderRadius: 8,
+    marginTop: 6,
+  },
+  optionText: { fontSize: 16, color: "#111827" },
 });
