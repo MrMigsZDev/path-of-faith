@@ -8,13 +8,6 @@ import {
   View,
 } from "react-native";
 
-/**
- * Path of Faith – MVP (PT/EN)
- * - Monopoly-like board (40 tiles)
- * - Single-player for testing
- * - Dice roll, movement, simple tile effects
- */
-
 type Lang = "pt" | "en";
 type TileType =
   | "START"
@@ -28,6 +21,14 @@ type TileType =
   | "TENTACAO";
 
 type Card = { pt: string; en: string; points?: number; moveDelta?: number };
+type Player = {
+  id: number;
+  name: string;
+  pos: number;
+  faith: number;
+  skip: number;
+  color: string;
+};
 
 const I18N = {
   title: { pt: "Caminho da Fé", en: "Path of Faith" },
@@ -43,7 +44,18 @@ const I18N = {
     en: "Sabbath: you rest this turn and gain +2 faith points.",
   },
   question: { pt: "Pergunta", en: "Question" },
+  players: { pt: "Jogadores", en: "Players" },
+  startGame: { pt: "Começar Jogo", en: "Start Game" },
 };
+
+const COLORS = [
+  "#2563eb",
+  "#dc2626",
+  "#16a34a",
+  "#f59e0b",
+  "#7c3aed",
+  "#0ea5e9",
+];
 
 const blessings: Card[] = [
   {
@@ -97,7 +109,7 @@ const questions = [
   },
   {
     ptQ: "Quem foram os três amigos de Daniel?",
-    ptA: "Sadraque, Mesaque, Abednego",
+    ptA: "Sadraque, Mesaque e Abednego",
     enQ: "Name Daniel's three friends.",
     enA: "Shadrach, Meshach, Abednego",
   },
@@ -147,7 +159,6 @@ const buildTiles = () => {
   ];
   return new Array(40).fill(null).map((_, i) => pattern[i % pattern.length]);
 };
-
 const TILES = buildTiles();
 
 function label(type: TileType, lang: Lang) {
@@ -165,7 +176,7 @@ function label(type: TileType, lang: Lang) {
   return map[type][lang];
 }
 
-// Compute coordinates for 40 tiles (10 per side)
+// 40 tiles (10 per side) coordinates around a square
 function getXY(index: number) {
   const side = 10,
     cell = 34,
@@ -188,82 +199,94 @@ function getXY(index: number) {
   return { x, y, cell, size };
 }
 
+// offsets for up to 6 tokens on the same tile (3x2 grid)
+function tokenOffset(slot: number) {
+  const positions = [
+    { dx: 2, dy: 2 },
+    { dx: 18, dy: 2 },
+    { dx: 2, dy: 18 },
+    { dx: 18, dy: 18 },
+    { dx: 10, dy: 10 },
+    { dx: 26, dy: 10 },
+  ];
+  return positions[slot % positions.length];
+}
+
 export default function App() {
   const [lang, setLang] = useState<Lang>("pt");
-  const [pos, setPos] = useState(0);
-  const [faith, setFaith] = useState(3);
-  const [skip, setSkip] = useState(0);
+  const [playerCount, setPlayerCount] = useState(2);
+  const [players, setPlayers] = useState<Player[] | null>(null);
+  const [current, setCurrent] = useState(0); // index of current player
   const [modal, setModal] = useState<string | null>(null);
+
+  function startGame() {
+    const pc = Math.min(6, Math.max(2, playerCount));
+    const ps: Player[] = new Array(pc).fill(null).map((_, i) => ({
+      id: i + 1,
+      name: `Jogador ${i + 1}`,
+      pos: 0,
+      faith: 3,
+      skip: 0,
+      color: COLORS[i % COLORS.length],
+    }));
+    setPlayers(ps);
+    setCurrent(0);
+    setModal(null);
+  }
 
   const roll = () => Math.floor(Math.random() * 6) + 1;
 
-  const onRoll = () => {
-    if (skip > 0) {
-      setSkip(skip - 1);
-      setFaith((f) => f + 2); // Sabbath rest
-      setModal(I18N.restMsg[lang]);
-      return;
-    }
-    const r1 = roll();
-    const r2 = roll();
-    const steps = r1 + r2;
-    const newPos = (pos + steps) % 40;
-    setPos(newPos);
-    resolveTile(newPos);
-    setModal(`${I18N.rolled[lang]} ${steps}`);
-  };
-
-  function resolveTile(index: number) {
-    const tile = TILES[index];
+  function resolveTileFor(p: Player) {
+    const tile = TILES[p.pos];
     switch (tile) {
       case "BENCAO": {
         const c = blessings[Math.floor(Math.random() * blessings.length)];
-        if (typeof c.points === "number") setFaith((v) => v + c.points);
+        if (typeof c.points === "number") p.faith += c.points;
         if (typeof c.moveDelta === "number")
-          setPos((p) => (p + c.moveDelta + 40) % 40);
+          p.pos = (p.pos + c.moveDelta + 40) % 40;
         setModal(lang === "pt" ? c.pt : c.en);
         break;
       }
       case "OBSTACULO": {
         const c = obstacles[Math.floor(Math.random() * obstacles.length)];
-        if (typeof c.points === "number") setFaith((v) => v + c.points);
+        if (typeof c.points === "number") p.faith += c.points;
         if (typeof c.moveDelta === "number")
-          setPos((p) => (p + c.moveDelta + 40) % 40);
+          p.pos = (p.pos + c.moveDelta + 40) % 40;
         setModal(lang === "pt" ? c.pt : c.en);
         break;
       }
       case "MISSAO": {
         const c = missions[Math.floor(Math.random() * missions.length)];
-        if (typeof c.points === "number") setFaith((v) => v + c.points);
+        if (typeof c.points === "number") p.faith += c.points;
         setModal(lang === "pt" ? c.pt : c.en);
         break;
       }
       case "DIZIMO": {
         const c = tithes[0];
-        if (typeof c.points === "number") setFaith((v) => v + c.points);
+        if (typeof c.points === "number") p.faith += c.points;
         setModal(lang === "pt" ? c.pt : c.en);
         break;
       }
       case "TENTACAO": {
         const c = temptations[0];
-        if (typeof c.points === "number") setFaith((v) => v + c.points);
+        if (typeof c.points === "number") p.faith += c.points;
         setModal(lang === "pt" ? c.pt : c.en);
         break;
       }
       case "SABADO": {
-        setSkip(1);
-        setFaith((v) => v + 2);
+        p.skip += 1; // rests next turn
+        p.faith += 2;
         setModal(I18N.restMsg[lang]);
         break;
       }
       case "PERGUNTA": {
         const c = questions[Math.floor(Math.random() * questions.length)];
+        p.faith += 1;
         setModal(
           `${lang === "pt" ? c.ptQ : c.enQ}\n\n(${I18N.question[lang]} ➜ ${
             lang === "pt" ? c.ptA : c.enA
           })\n(+1 ${I18N.faith[lang]})`
         );
-        setFaith((v) => v + 1);
         break;
       }
       default:
@@ -271,8 +294,38 @@ export default function App() {
     }
   }
 
+  function onRoll() {
+    if (!players) return;
+
+    setPlayers((prev) => {
+      if (!prev) return prev;
+      const copy = prev.map((p) => ({ ...p }));
+      const p = copy[current];
+
+      if (p.skip > 0) {
+        p.skip -= 1;
+        p.faith += 2; // sabbath rest benefit on the skipped turn
+        setModal(I18N.restMsg[lang]);
+      } else {
+        const r1 = roll();
+        const r2 = roll();
+        const steps = r1 + r2;
+        p.pos = (p.pos + steps) % 40;
+        resolveTileFor(p);
+        setModal((m) => `${I18N.rolled[lang]} ${steps}\n\n${m ?? ""}`.trim());
+      }
+      return copy;
+    });
+
+    // pass turn to next player AFTER state update
+    setCurrent((i) => {
+      if (!players) return 0;
+      return (i + 1) % players.length;
+    });
+  }
+
   const board = useMemo(() => {
-    const tiles = [];
+    const tiles: React.ReactNode[] = [];
     for (let i = 0; i < 40; i++) {
       const { x, y, cell, size } = getXY(i);
       tiles.push(
@@ -290,7 +343,20 @@ export default function App() {
           ]}
         >
           <Text style={styles.tileText}>{label(TILES[i], lang)}</Text>
-          {pos === i && <View style={styles.token} />}
+          {players &&
+            players.map((pl, idx) => {
+              if (pl.pos !== i) return null;
+              const { dx, dy } = tokenOffset(idx);
+              return (
+                <View
+                  key={pl.id}
+                  style={[
+                    styles.token,
+                    { backgroundColor: pl.color, left: dx, top: dy },
+                  ]}
+                />
+              );
+            })}
         </View>
       );
       if (i === 39) {
@@ -308,19 +374,87 @@ export default function App() {
       }
     }
     return tiles;
-  }, [lang, pos]);
+  }, [lang, players]);
+
+  // Setup screen (choose 2–6 players) before starting
+  if (!players) {
+    return (
+      <View style={styles.container}>
+        <Text style={styles.title}>{I18N.title[lang]}</Text>
+
+        <View style={styles.hud}>
+          <Pressable
+            style={styles.langBtn}
+            onPress={() => setLang((l) => (l === "pt" ? "en" : "pt"))}
+          >
+            <Text style={styles.btnText}>
+              {I18N.lang[lang]}: {lang.toUpperCase()}
+            </Text>
+          </Pressable>
+        </View>
+
+        <View style={{ gap: 12, alignItems: "center", marginTop: 24 }}>
+          <Text style={{ fontSize: 16 }}>
+            {I18N.players[lang]}: {playerCount}
+          </Text>
+          <View style={{ flexDirection: "row", gap: 12 }}>
+            <Pressable
+              onPress={() => setPlayerCount((p) => Math.max(2, p - 1))}
+              style={styles.smallBtn}
+            >
+              <Text style={styles.smallBtnText}>−</Text>
+            </Pressable>
+            <Pressable
+              onPress={() => setPlayerCount((p) => Math.min(6, p + 1))}
+              style={styles.smallBtn}
+            >
+              <Text style={styles.smallBtnText}>+</Text>
+            </Pressable>
+          </View>
+          <Pressable style={styles.startBtn} onPress={startGame}>
+            <Text style={styles.btnText}>{I18N.startGame[lang]}</Text>
+          </Pressable>
+        </View>
+      </View>
+    );
+  }
 
   return (
     <View style={styles.container}>
       <Text style={styles.title}>{I18N.title[lang]}</Text>
 
       <View style={styles.hud}>
-        <Text style={styles.hudText}>
-          {I18N.pos[lang]}: {pos}
-        </Text>
-        <Text style={styles.hudText}>
-          {I18N.faith[lang]}: {faith}
-        </Text>
+        <View
+          style={{
+            flexDirection: "row",
+            flexWrap: "wrap",
+            gap: 8,
+            justifyContent: "center",
+            flex: 1,
+          }}
+        >
+          {players.map((p, idx) => (
+            <View
+              key={p.id}
+              style={{ flexDirection: "row", alignItems: "center", gap: 6 }}
+            >
+              <View
+                style={{
+                  width: 10,
+                  height: 10,
+                  borderRadius: 5,
+                  backgroundColor: p.color,
+                  borderWidth: 1,
+                  borderColor: "#0002",
+                }}
+              />
+              <Text style={{ fontWeight: current === idx ? "700" : "500" }}>
+                {p.name}: {p.faith}
+              </Text>
+            </View>
+          ))}
+        </View>
+
         <Pressable
           style={styles.langBtn}
           onPress={() => setLang((l) => (l === "pt" ? "en" : "pt"))}
@@ -334,7 +468,9 @@ export default function App() {
       <View style={styles.boardWrap}>{board}</View>
 
       <Pressable style={styles.rollBtn} onPress={onRoll}>
-        <Text style={styles.btnText}>{I18N.roll[lang]}</Text>
+        <Text style={styles.btnText}>
+          {I18N.roll[lang]} — {players[current]?.name}
+        </Text>
       </Pressable>
 
       <Modal visible={!!modal} transparent animationType="fade">
@@ -383,10 +519,11 @@ const styles = StyleSheet.create({
   title: { fontSize: 22, fontWeight: "700", textAlign: "center" },
   hud: {
     flexDirection: "row",
-    justifyContent: "space-around",
     alignItems: "center",
+    gap: 12,
+    justifyContent: "space-between",
+    paddingHorizontal: 12,
   },
-  hudText: { fontSize: 16 },
   langBtn: {
     backgroundColor: "#333",
     paddingHorizontal: 12,
@@ -413,15 +550,7 @@ const styles = StyleSheet.create({
     alignItems: "center",
   },
   tileText: { fontSize: 8, textAlign: "center" },
-  token: {
-    width: 10,
-    height: 10,
-    borderRadius: 5,
-    backgroundColor: "#333",
-    position: "absolute",
-    bottom: 2,
-    right: 2,
-  },
+  token: { width: 10, height: 10, borderRadius: 5, position: "absolute" },
   center: {
     position: "absolute",
     justifyContent: "center",
@@ -458,5 +587,21 @@ const styles = StyleSheet.create({
     paddingVertical: 10,
     borderRadius: 8,
     alignItems: "center",
+  },
+
+  // Setup screen
+  smallBtn: {
+    backgroundColor: "#1f2937",
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    borderRadius: 8,
+  },
+  smallBtnText: { color: "#fff", fontWeight: "700", fontSize: 18 },
+  startBtn: {
+    backgroundColor: "#0f766e",
+    paddingHorizontal: 16,
+    paddingVertical: 12,
+    borderRadius: 10,
+    marginTop: 8,
   },
 });
