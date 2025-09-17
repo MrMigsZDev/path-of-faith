@@ -1,0 +1,12 @@
+[
+  {
+    "q": "Who build the ark",
+    "opts": ["Jonas", "Pedro", "Elias"],
+    "correct": 1
+  },
+  {
+    "q": "Who was swallowed by a great fish?",
+    "opts": ["Jonah", "Peter", "Elijah"],
+    "correct": 0
+  }
+]

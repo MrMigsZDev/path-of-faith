@@ -1,0 +1,12 @@
+[
+  {
+    "q": "Quem construiu a arca?",
+    "opts": ["Moisés", "Noé", "Abraão"],
+    "correct": 1
+  },
+  {
+    "q": "Quem foi engolido por um grande peixe?",
+    "opts": ["Jonas", "Pedro", "Elias"],
+    "correct": 1
+  }
+]
